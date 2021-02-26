@@ -7,6 +7,11 @@
 	```bash
 	curl -s https://get.nextflow.io | bash  OR INSTALL WITH CONDA : conda install nextflow 
 	```
+	-ECHO NEXTFLOW TO PATH:
+	```bash
+	echo 'export PATH=$PATH:/path/to/nextflow' >> ~/.bashrc
+	source  ~/.bashrc
+	```
 	-This pipeline is based one nextflow DSL2 , so you can run nextflow self-update to update NEXTFLOW to new version
 
 2. -STEP02:
