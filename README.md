@@ -39,7 +39,7 @@
 	```bash
 	nextflow run main.nf 
 	```
-Tips: When you first install docker and run the process, it will automatically download the required docker image and activate it.
+	-Tips: When you first install docker and run the process, it will automatically download the required docker image and activate it.
 4. -YOU CAN ALSO RUN PIPELINE WITH Multiple specified parameters:
 	```bash
 	nextflow run main.nf --reads '/path/to/reads/*.fq.gz'
@@ -49,4 +49,4 @@ Tips: When you first install docker and run the process, it will automatically d
 	--gtf hsa.gff3 
 	--species hsa
 	```
-5. Nextflow is based on java, so please comfirm that java in you PATH
+5. -Nextflow is based on java, so please comfirm that java in you PATH
