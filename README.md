@@ -47,5 +47,6 @@ Tips: When you first install docker and run the process, it will automatically d
 	--mature mature.fa 
 	--genome genome.fa 
 	--gtf hsa.gff3 
-	--species hsa 
+	--species hsa
 	```
+5. Nextflow is based on java, so please comfirm that java in you PATH
