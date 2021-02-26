@@ -34,3 +34,4 @@
 	```bash
 	nextflow run main.nf 
 	```
+Tips: When you first install docker and run the process, it will automatically download the required docker image and activate it.
