@@ -42,11 +42,11 @@
 	-Tips: When you first install docker and run the process, it will automatically download the required docker image and activate it.
 4. -YOU CAN ALSO RUN PIPELINE WITH Multiple specified parameters:
 	```bash
-	nextflow run main.nf --reads '/path/to/reads/*.fq.gz'
-	--hairpin hairpin.fa 
-	--mature mature.fa 
-	--genome genome.fa 
-	--gtf hsa.gff3 
+	nextflow run main.nf --reads '/path/to/reads/*.fq.gz' \
+	--hairpin hairpin.fa \
+	--mature mature.fa \
+	--genome genome.fa \
+	--gtf hsa.gff3 \
 	--species hsa
 	```
 5. -Nextflow is based on java, so please comfirm that java in you PATH
