@@ -680,7 +680,7 @@ process SALMON_QUANT_FOR_CLEAN_READS_WITH_PREVIOUS_BUILD_INDEX{
 
 process BOWTIE_INDEX_BUILDING_FOR_GENOME_FASTA {
   label 'bowtie'
-
+  publishDir "${params.outdir}/reference_prepare/bowtie_index", mode: params.publish_dir_mode
   input:
   path genome
   output:
@@ -689,6 +689,191 @@ process BOWTIE_INDEX_BUILDING_FOR_GENOME_FASTA {
   """
   mkdir bowtie
   bowtie-build --threads $task.cpus $genome bowtie/${genome.baseName}
+  """
+}
+process BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_GENOME_INDEX {
+    tag "sample"
+    label 'bowtie'
+    publishDir "${params.outdir}/bowtie_mapping/genome", mode: params.publish_dir_mode
+    
+    input:
+    tuple val(sample), path(reads)
+    path  index
+
+    output:
+    tuple val(sample), path('*.bam'), emit: bam
+    tuple val(sample), path('*.out'), emit: log
+    tuple val(sample), path('*fastq.gz'), optional:true, emit: fastq
+
+    script:
+    seq_center = params.seq_center ? "--sam-RG ID:${sample} --sam-RG 'CN:${params.seq_center}'" : ''
+    """
+    INDEX=`find -L ./ -name "*.3.ebwt" | sed 's/.3.ebwt//'`
+    bowtie \\
+        --threads $task.cpus \\
+        --sam \\
+        -x \$INDEX \\
+        -q \\
+        -t \\
+        -k 50 \\
+        --best \\
+        --strata \\
+        -e 99999 \\
+        --chunkmbs 2048 \\
+        $reads \\
+        --un ${sample}.mature_unmapped.fq \\
+        2> ${sample}.out \\
+        | samtools view -@ $task.cpus -bS -o ${sample}.bam
+
+    """
+}
+process SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_GENOME_INDEX{
+    label 'samtools'
+    tag "$sample"
+    input:
+    tuple val(sample), path (bam)
+    output:
+    tuple val(sample), path("*.sorted.bam") , emit:sorted_bam
+
+    script:
+    """
+    samtools sort -@ $task.cpus -o ${sample}.sorted.bam -T $sample $bam
+    """
+
+}
+/*
+--------------------------------------------------------------------------------
+Define a bam index function for pipeline
+--------------------------------------------------------------------------------
+*/
+process SAMTOOLS_INDEX_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX {
+    label 'samtools'
+    tag "$sample"
+    publishDir "${params.outdir}/bam_report/genome/idx_statistics",mode: params.publish_dir_mode
+
+    input:
+    tuple val(sample), path (bam)
+
+    output:
+    tuple val(sample), path("*.idxstats"), emit: idxstats
+
+    script:
+
+    """
+    samtools index $bam
+    samtools idxstats $bam > ${bam}.idxstats
+
+    """
+}
+/*
+--------------------------------------------------------------------------------
+Define a bam stat function for pipeline
+--------------------------------------------------------------------------------
+*/
+process SAMTOOLS_STAT_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX {
+    label 'samtools'
+    tag "$sample"
+    publishDir "${params.outdir}/bam_report/genome/statistics",mode: params.publish_dir_mode
+
+    input:
+    tuple val(sample), path (bam)
+
+    output:
+    tuple val(sample), path("*.stats"), emit: stats
+
+    script:
+
+    """
+    samtools stats $bam > ${bam}.stats
+
+    """
+}
+/*
+--------------------------------------------------------------------------------
+Define a bam flagstat function for pipeline
+--------------------------------------------------------------------------------
+*/
+process SAMTOOLS_FLAGSTAT_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX{
+    label 'samtools'
+    tag "$sample"
+    publishDir "${params.outdir}/bam_report/genome/flag_statistics",mode: params.publish_dir_mode
+
+    input:
+    tuple val(sample), path (bam)
+
+    output:
+
+    tuple val(sample), path("*.flagstat"), emit: flagstat
+
+    script:
+
+    """
+    samtools flagstat $bam > ${bam}.flagstat
+
+    """
+}
+
+process HTSEQ_COUNTS_FOR_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX {
+    label 'htseq'
+    tag "$sample"
+    publishDir "${params.outdir}/miRNA_quantify/htseq-count",mode: params.publish_dir_mode
+
+    input:
+    tuple val(sample), path (bam)
+    path gtf
+
+    output:
+
+    tuple val(sample), path("*txt"), emit: results
+
+    script:
+
+    """
+    htseq-count -f bam -s no $bam $gtf > ${sample}.txt
+
+    """
+}
+process FEATURE_COUNTS_FOR_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX {
+    label 'featurecounts'
+    tag "$sample"
+    publishDir "${params.outdir}/miRNA_quantify/featureCounts",mode: params.publish_dir_mode
+
+    input:
+    tuple val(sample), path (bam)
+    path gtf
+
+    output:
+
+    tuple val(sample), path("*txt"), emit: results
+
+    script:
+
+    """
+    featureCounts \\
+    -T $task.cpus \\
+    -F gff \\
+    -M \\
+    -t miRNA \\
+    -g Name \\
+    -a $gtf \\
+    -o ${sample}.txt \\
+    $bam
+
+    """
+}
+
+process MERGE_HTSEQ_COUNTS_RESULTS {  
+
+  input:
+  path ('htseq_counts_results/*')
+  output:
+  path ('counts.txt'), emit: htseq_counts
+  script:
+  """
+  ls *txt | cut -d'.' -f 1 |tr '\n' '\t' |awk '{print \$0}'| sed 's/^/'\\t'&/g' > counts.file
+  paste *.txt | awk '{printf \$1"\t";for(i=2;i<=NF;i+=2) printf \$i"\t";printf \$i"\n"}' > reads_count.txt  
+  cat reads_count.txt >> counts.file
+  mv counts.file counts.txt
   """
 }
 
@@ -886,6 +1071,76 @@ process MULTIQC_FOR_SAMTOOLS_IDX_STATISTICS_RESULTS_FOR_HAIRPIN_MAPPED_BAMS {
     multiqc -f --export samtools_idxstat/
     """
 }
+process MULTIQC_FOR_BOWTIE_MAPPING_RESULTS_FOR_GENOME_MAPPED_BAMS {
+    label 'multiqc'
+    publishDir "${params.outdir}/Analysis_Report/bowtie_genome", mode: params.publish_dir_mode
+
+    input:
+    path ('bowtie/*')
+    
+    output:
+    path "*multiqc_report.html", emit: report
+    path "*_data"              , emit: data
+    path "*_plots"             , optional:true, emit: plots
+
+    script:
+    """
+    multiqc -f --export bowtie/
+    """
+}
+
+process MULTIQC_SAMTOOLS_STATISTICS_RESULTS_FOR_GENOME_MAPPED_BAMS {
+    label 'multiqc'
+    publishDir "${params.outdir}/Analysis_Report/genome_samtools/samtools_statistics", mode: params.publish_dir_mode
+
+    input:
+    path ('samtools_stat/*')
+    
+    output:
+    path "*multiqc_report.html", emit: report
+    path "*_data"              , emit: data
+    path "*_plots"             , optional:true, emit: plots
+
+    script:
+    """
+    multiqc -f --export samtools_stat/
+    """
+}
+
+process MULTIQC_FOR_SAMTOOLS_FLAG_STATISTICS_RESULTS_FOR_GENOME_MAPPED_BAMS {
+    label 'multiqc'
+    publishDir "${params.outdir}/Analysis_Report/genome_samtools/samtools_flagstat", mode: params.publish_dir_mode
+    input:
+    path ('samtools_flagstat/*')
+    
+    output:
+    path "*multiqc_report.html", emit: report
+    path "*_data"              , emit: data
+    path "*_plots"             , optional:true, emit: plots
+
+    script:
+    """
+    multiqc -f --export samtools_flagstat/
+    """
+}
+
+process MULTIQC_FOR_SAMTOOLS_IDX_STATISTICS_RESULTS_FOR_GENOME_MAPPED_BAMS {
+    label 'multiqc'
+    publishDir "${params.outdir}/Analysis_Report/genome_samtools/samtools_idxstat", mode: params.publish_dir_mode
+
+    input:
+    path ('samtools_idxstat/*')
+    
+    output:
+    path "*multiqc_report.html", emit: report
+    path "*_data"              , emit: data
+    path "*_plots"             , optional:true, emit: plots
+
+    script:
+    """
+    multiqc -f --export samtools_idxstat/
+    """
+}
 
 workflow GET_SOFTWARE_VERSION_OF_PIPELINE {
 
@@ -969,15 +1224,19 @@ workflow BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX{
   take:
   mature_index
   hairpin_index
+  genome_index
   reads
   main:
   BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_MATURE_MIRNA_INDEX ( reads, mature_index )
   BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_HAIRPIN_MIRNA_INDEX ( reads, hairpin_index )
+  BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_GENOME_INDEX ( reads, genome_index )
   emit:
   mature_bam       = BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_MATURE_MIRNA_INDEX.out.bam
   hairpin_bam      = BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_HAIRPIN_MIRNA_INDEX.out.bam
+  genome_bam       = BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_GENOME_INDEX.out.bam
   mature_bam_log   = BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_MATURE_MIRNA_INDEX.out.log
   hairpin_bam_log  = BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_HAIRPIN_MIRNA_INDEX.out.log
+  genome_bam_log   = BOWTIE_ALIGNMENT_FOR_FILTERED_CLEAN_READS_WITH_GENOME_INDEX.out.log
 }
 
 workflow SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX {
@@ -985,6 +1244,7 @@ workflow SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX
     take:
     mature_bam
     hairpin_bam
+    genome_bam
     main:
     SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_MATURE_INDEX ( mature_bam )
 
@@ -1004,17 +1264,31 @@ workflow SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX
     SAMTOOLS_STAT_FOR_BOWTIE_MAPPED_BAM_WITH_HAIRPIN_INDEX ( hairpin_bam_for_stat )
     SAMTOOLS_FLAGSTAT_FOR_BOWTIE_MAPPED_BAM_WITH_HAIRPIN_INDEX ( hairpin_bam_for_flagstat )
 
+    SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_GENOME_INDEX ( genome_bam )
+
+    genome_bam_for_stat       = SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_GENOME_INDEX.out.sorted_bam
+    genome_bam_for_flagstat   = SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_GENOME_INDEX.out.sorted_bam
+    genome_bam_for_idxstat    = SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_GENOME_INDEX.out.sorted_bam
+
+    SAMTOOLS_INDEX_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX ( genome_bam_for_idxstat )
+    SAMTOOLS_STAT_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX ( genome_bam_for_stat )
+    SAMTOOLS_FLAGSTAT_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX ( genome_bam_for_flagstat )
 
     emit:
     mature_sorted_bam        = SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_MATURE_INDEX.out.sorted_bam
     hairpin_sorted_bam       = SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_HAIRPIN_INDEX.out.sorted_bam
+    genome_sorted_bam        = SAMTOOLS_SORTING_BAM_FOR_BOWTIE_UNSORTED_BAM_WITH_GENOME_INDEX.out.sorted_bam
 
-    mature_bam_stat      = SAMTOOLS_STAT_FOR_BOWTIE_MAPPED_BAM_WITH_MATURE_INDEX.out.stats
-    mature_bam_flagstat  = SAMTOOLS_FLAGSTAT_FOR_BOWTIE_MAPPED_BAM_WITH_MATURE_INDEX.out.flagstat
-    mature_bam_idxstat   = SAMTOOLS_INDEX_FOR_BOWTIE_MAPPED_BAM_WITH_MATURE_INDEX.out.idxstats
+    mature_bam_stat       = SAMTOOLS_STAT_FOR_BOWTIE_MAPPED_BAM_WITH_MATURE_INDEX.out.stats
+    mature_bam_flagstat   = SAMTOOLS_FLAGSTAT_FOR_BOWTIE_MAPPED_BAM_WITH_MATURE_INDEX.out.flagstat
+    mature_bam_idxstat    = SAMTOOLS_INDEX_FOR_BOWTIE_MAPPED_BAM_WITH_MATURE_INDEX.out.idxstats
     hairpin_bam_stat      = SAMTOOLS_STAT_FOR_BOWTIE_MAPPED_BAM_WITH_HAIRPIN_INDEX.out.stats
     hairpin_bam_flagstat  = SAMTOOLS_FLAGSTAT_FOR_BOWTIE_MAPPED_BAM_WITH_HAIRPIN_INDEX.out.flagstat
     hairpin_bam_idxstat   = SAMTOOLS_INDEX_FOR_BOWTIE_MAPPED_BAM_WITH_HAIRPIN_INDEX.out.idxstats
+    genome_bam_stat       = SAMTOOLS_STAT_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX.out.stats
+    genome_bam_flagstat   = SAMTOOLS_FLAGSTAT_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX.out.flagstat
+    genome_bam_idxstat    = SAMTOOLS_INDEX_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX.out.idxstats
+
 }
 
 workflow MULTIQC_FOR_ALL_STEPS_OF_MIRNA_ANALYSIS {
@@ -1030,7 +1304,11 @@ workflow MULTIQC_FOR_ALL_STEPS_OF_MIRNA_ANALYSIS {
     mature_samtools_idxstat_results
     hairpin_samtools_stat_results
     hairpin_samtools_flagstat_results
-    hairpin_samtools_idxstat_results   
+    hairpin_samtools_idxstat_results
+    bowtie_genome_out
+    genome_samtools_stat_results
+    genome_samtools_flagstat_results
+    genome_samtools_idxstat_results
 
     main:
     MULTIQC_FOR_RAW_READS_FASTQC_RESULTS ( raw_reads_fastqc_zip )
@@ -1044,6 +1322,10 @@ workflow MULTIQC_FOR_ALL_STEPS_OF_MIRNA_ANALYSIS {
     MULTIQC_SAMTOOLS_STATISTICS_RESULTS_FOR_HAIRPIN_MAPPED_BAMS ( hairpin_samtools_stat_results )
     MULTIQC_FOR_SAMTOOLS_FLAG_STATISTICS_RESULTS_FOR_HAIRPIN_MAPPED_BAMS ( hairpin_samtools_flagstat_results )
     MULTIQC_FOR_SAMTOOLS_IDX_STATISTICS_RESULTS_FOR_HAIRPIN_MAPPED_BAMS ( hairpin_samtools_idxstat_results )
+    MULTIQC_FOR_BOWTIE_MAPPING_RESULTS_FOR_GENOME_MAPPED_BAMS ( bowtie_genome_out )
+    MULTIQC_SAMTOOLS_STATISTICS_RESULTS_FOR_GENOME_MAPPED_BAMS ( genome_samtools_stat_results )
+    MULTIQC_FOR_SAMTOOLS_FLAG_STATISTICS_RESULTS_FOR_GENOME_MAPPED_BAMS ( genome_samtools_flagstat_results )
+    MULTIQC_FOR_SAMTOOLS_IDX_STATISTICS_RESULTS_FOR_GENOME_MAPPED_BAMS ( genome_samtools_idxstat_results )
 }
 
 workflow SALMON_INDEX_BUILDING_AND_QUANT_FOR_TRIMMED_READS_OF_SMALL_RNASEQ{
@@ -1063,6 +1345,13 @@ workflow SALMON_INDEX_BUILDING_AND_QUANT_FOR_TRIMMED_READS_OF_SMALL_RNASEQ{
   salmon_quant_results    = SALMON_QUANT_FOR_CLEAN_READS_WITH_PREVIOUS_BUILD_INDEX.out.results
 }
 
+
+/*
+=======================================================================================================
+THIS IS THE START OF MIRNA PIPELINE
+=======================================================================================================
+*/
+
 workflow {
 
   GET_SOFTWARE_VERSION_OF_PIPELINE (  )
@@ -1078,12 +1367,29 @@ workflow {
 
   FASTQC_QUALITY_CHECK_AND_TRIM_GALORE_READS_FILTER_FOR_RAW_READS ( raw_reads )
 
+  if ( params.genome_mapping ){
+  if ( !params.bowtie_index ){
+      BOWTIE_INDEX_BUILDING_FOR_GENOME_FASTA ( genome )
+    }
+
+  }
+
   BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX ( PREPARE_REFERENCE_FASTA_AND_INDEX_FOR_BOWTIE_MAPPING.out.mature_index,
   PREPARE_REFERENCE_FASTA_AND_INDEX_FOR_BOWTIE_MAPPING.out.hairpin_index,
+  BOWTIE_INDEX_BUILDING_FOR_GENOME_FASTA.out.index,
   FASTQC_QUALITY_CHECK_AND_TRIM_GALORE_READS_FILTER_FOR_RAW_READS.out.reads )
 
-  SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX ( BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX.out.mature_bam,
-  BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX.out.hairpin_bam )
+  genome_bam_for_htseq = BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX.out.genome_bam
+  genome_bam_for_featurecounts = BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX.out.genome_bam
+  HTSEQ_COUNTS_FOR_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX ( genome_bam_for_htseq, gtf )
+  FEATURE_COUNTS_FOR_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX ( genome_bam_for_featurecounts, gtf )
+  //MERGE_HTSEQ_COUNTS_RESULTS ( HTSEQ_COUNTS_FOR_FOR_BOWTIE_MAPPED_BAM_WITH_GENOME_INDEX.out.results.collect{it[1]})
+
+  SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX ( 
+  BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX.out.mature_bam,
+  BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX.out.hairpin_bam,
+  BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX.out.genome_bam
+  )
 
   MULTIQC_FOR_ALL_STEPS_OF_MIRNA_ANALYSIS ( 
     FASTQC_QUALITY_CHECK_AND_TRIM_GALORE_READS_FILTER_FOR_RAW_READS.out.raw_fastqc_zip.collect{it[1]}, 
@@ -1096,19 +1402,19 @@ workflow {
     SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX.out.mature_bam_idxstat.collect{it[1]},
     SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX.out.hairpin_bam_stat.collect{it[1]},
     SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX.out.hairpin_bam_flagstat.collect{it[1]},
-    SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX.out.hairpin_bam_idxstat.collect{it[1]}
+    SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX.out.hairpin_bam_idxstat.collect{it[1]},
+    BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX.out.genome_bam_log.collect{it[1]},
+    SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX.out.genome_bam_stat.collect{it[1]},
+    SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX.out.genome_bam_flagstat.collect{it[1]},
+    SAMTOOLS_SORT_STAT_FOR_BOWTIE_MAPPING_BAM_WITH_MATURE_AND_HAIRPIN_INDEX.out.genome_bam_idxstat.collect{it[1]}
+
 ) 
 
   if ( params.salmon ){
     clean_reads_for_salmon_quant = FASTQC_QUALITY_CHECK_AND_TRIM_GALORE_READS_FILTER_FOR_RAW_READS.out.reads
     SALMON_INDEX_BUILDING_AND_QUANT_FOR_TRIMMED_READS_OF_SMALL_RNASEQ ( genome, gtf, clean_reads_for_salmon_quant )
   }
-  if ( params.genome_mapping ){
-    if ( !params.bowtie_index ){
-      BOWTIE_INDEX_BUILDING_FOR_GENOME_FASTA ( genome )
-    }
 
-  }
-  
+    
 }
 
