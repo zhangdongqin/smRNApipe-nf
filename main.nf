@@ -1370,8 +1370,10 @@ workflow {
   if ( params.genome_mapping ){
   if ( !params.bowtie_index ){
       BOWTIE_INDEX_BUILDING_FOR_GENOME_FASTA ( genome )
+      genome_index = BOWTIE_INDEX_BUILDING_FOR_GENOME_FASTA.out.index
+    } else {
+      genome_index = params.bowtie_index  //[ only /path/to/bowtie/index ]
     }
-
   }
 
   BOWTIE_MAPPING_FOR_CLEAN_READS_WITH_DIFFERENT_INDEX ( PREPARE_REFERENCE_FASTA_AND_INDEX_FOR_BOWTIE_MAPPING.out.mature_index,
